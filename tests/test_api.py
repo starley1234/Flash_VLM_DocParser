@@ -61,7 +61,8 @@ def test_convert_job_lifecycle(tmp_path, sample_pdf):
     job_id = response.json()["job_id"]
 
     status = {}
-    for _ in range(200):
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
         status = client.get(f"/jobs/{job_id}").json()
         if status["status"] in {"done", "error"}:
             break

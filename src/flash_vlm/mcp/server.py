@@ -126,6 +126,7 @@ def create_mcp_server(settings: Settings | None = None, pipeline: Pipeline | Non
         )
         header = (
             f"✅ Конвертация завершена. Сохранено в: {result.output_path}\n"
+            f"Модель: {result.model}\n"
             f"Страниц: {result.pages_total} (ok={result.pages_ok}, ошибок={result.pages_failed})\n\n"
         )
         return header + result.markdown

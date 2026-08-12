@@ -33,7 +33,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_convert.add_argument("pdf", type=Path, help="Путь к PDF-файлу")
     p_convert.add_argument("-o", "--output", type=Path, default=None, help="Путь к .md (или каталог)")
     p_convert.add_argument("--pages", default=None, help="Страницы, например '1-5,8' (по умолчанию все)")
-    p_convert.add_argument("--model", default=None, help="Модель VLM (по умолчанию автоопределение)")
+    p_convert.add_argument(
+        "--model",
+        default=None,
+        help="Модель VLM (по умолчанию берётся из FLASH_VLM_MODEL, иначе автоопределение)",
+    )
     p_convert.add_argument("--width", type=int, default=None, help="Ширина изображения (по умолчанию 512)")
     p_convert.add_argument("--prompt-file", type=Path, default=None, help="Файл с системным промптом")
     p_convert.add_argument("--page-markers", action="store_true", help="Добавить комментарии <!-- Page N -->")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -16,6 +17,8 @@ from .queue_manager import TaskQueue
 from .schemas import ConversionResult, PageResult
 from .utils import ensure_dir, now_ms, parse_pages, sha1_hex
 from .vlm import VisionClient
+
+logger = logging.getLogger(__name__)
 
 # done, total, current_page — вызывается после каждой обработанной страницы.
 # Может быть как синхронной, так и асинхронной функцией.
@@ -55,7 +58,8 @@ class Pipeline:
         Args:
             pdf_path: путь к PDF-файлу.
             pages: спецификация страниц (``None``/``"1-5,8"``/список).
-            model: идентификатор модели (``None`` = автоопределение).
+            model: идентификатор модели. Приоритет: явный параметр → настройка
+                ``FLASH_VLM_MODEL`` → автоопределение первой доступной модели.
             prompt: системный промпт (``None`` = промпт по умолчанию).
             output_path: путь к итоговому ``.md`` (или каталог для него).
             page_markers: добавлять комментарии ``<!-- Page N -->``.
@@ -70,7 +74,9 @@ class Pipeline:
             raise FileNotFoundError(f"Файл не найден: {pdf_path}")
 
         prompt = prompt or prompts.DEFAULT_SYSTEM_PROMPT
-        model = await self.client.resolve_model(model)
+        # Приоритет модели: явный параметр -> настройка FLASH_VLM_MODEL -> автоопределение.
+        model = await self.client.resolve_model(model or self.settings.model or None)
+        logger.info("Модель для распознавания: %s", model)
 
         total_pages = self.pdf.page_count(pdf_path)
         page_numbers = parse_pages(pages, total_pages)

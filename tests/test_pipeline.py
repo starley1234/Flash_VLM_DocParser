@@ -59,6 +59,32 @@ def test_convert_partial_pages(sample_pdf, tmp_path):
     assert [p.page for p in result.pages] == [1, 3]
 
 
+def test_convert_uses_settings_model_by_default(sample_pdf, tmp_path):
+    """Модель из FLASH_VLM_MODEL (settings.model) должна использоваться,
+    если явная модель не передана."""
+    settings = Settings(
+        fake_vlm=True,
+        model="my-configured-model",
+        cache_dir=tmp_path / "cache",
+        output_dir=tmp_path / "output",
+    )
+    pipeline = build_pipeline(settings)
+    result = asyncio.run(pipeline.convert(sample_pdf))
+    assert result.model == "my-configured-model"
+
+
+def test_convert_explicit_model_overrides_settings(sample_pdf, tmp_path):
+    settings = Settings(
+        fake_vlm=True,
+        model="my-configured-model",
+        cache_dir=tmp_path / "cache",
+        output_dir=tmp_path / "output",
+    )
+    pipeline = build_pipeline(settings)
+    result = asyncio.run(pipeline.convert(sample_pdf, model="explicit-model"))
+    assert result.model == "explicit-model"
+
+
 def test_convert_missing_file(tmp_path):
     settings = Settings(fake_vlm=True, cache_dir=tmp_path / "cache", output_dir=tmp_path / "output")
     pipeline = build_pipeline(settings)

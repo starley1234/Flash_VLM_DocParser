@@ -16,10 +16,12 @@ except ImportError as exc:  # pragma: no cover
         "Streamlit не установлен. Установите: pip install 'flash-vlm-docparser[ui]'"
     ) from exc
 
-from ..config import Settings
+from ..config import Settings, get_settings
 from ..factory import build_pipeline
 
 st.set_page_config(page_title="Flash-VLM DocParser", layout="wide")
+
+_DEFAULT_SETTINGS = get_settings()
 
 
 def _run_conversion(pdf_bytes: bytes, filename: str, settings: Settings, pages: str | None) -> dict:
@@ -57,13 +59,26 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Настройки")
-        base_url = st.text_input("LM Studio API", value="http://localhost:1234/v1")
-        model = st.text_input("Модель (пусто = авто)", value="")
-        width = st.slider("Ширина изображения, px", 256, 1536, 512, step=64)
-        concurrency = st.slider("Параллельные запросы", 1, 4, 1)
+        base_url = st.text_input(
+            "LM Studio API",
+            value=_DEFAULT_SETTINGS.lmstudio_base_url,
+        )
+        model = st.text_input(
+            "Модель (пусто = авто)",
+            value=_DEFAULT_SETTINGS.model,
+            help="По умолчанию берётся из FLASH_VLM_MODEL",
+        )
+        width = st.slider(
+            "Ширина изображения, px",
+            256,
+            1536,
+            _DEFAULT_SETTINGS.image_width,
+            step=64,
+        )
+        concurrency = st.slider("Параллельные запросы", 1, 4, _DEFAULT_SETTINGS.concurrency)
         page_markers = st.checkbox("Маркеры страниц (<!-- Page N -->)", value=False)
         use_cache = st.checkbox("Кешировать страницы", value=True)
-        fake = st.checkbox("Демо-режим (без LM Studio)", value=False)
+        fake = st.checkbox("Демо-режим (без LM Studio)", value=_DEFAULT_SETTINGS.fake_vlm)
 
     uploaded = st.file_uploader("Загрузите PDF-файл", type=["pdf"])
     pages = st.text_input("Страницы (необязательно), напр. 1-5,8", value="")
@@ -87,8 +102,8 @@ def main() -> None:
 
         st.success(
             f"Готово: {result['output_path']} "
-            f"(страниц {result['pages_total']}, из кеша {result['cached_pages']}, "
-            f"время {result['duration_ms'] / 1000:.1f} c)"
+            f"(модель {result['model']}, страниц {result['pages_total']}, "
+            f"из кеша {result['cached_pages']}, время {result['duration_ms'] / 1000:.1f} c)"
         )
         st.download_button(
             "Скачать Markdown",
