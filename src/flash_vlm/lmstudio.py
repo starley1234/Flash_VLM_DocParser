@@ -34,13 +34,27 @@ class LmStudioClient(VisionClient):
     ) -> None:
         base_url = base_url.rstrip("/")
         self.base_url = base_url
+        self.api_key = api_key
         self.image_format = "JPEG" if image_format.upper() in {"JPEG", "JPG"} else "PNG"
         self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
         self._http = httpx.AsyncClient(base_url=base_url, timeout=timeout)
 
     async def list_models(self) -> list[str]:
-        """Запрашивает список моделей у LM Studio (``GET /v1/models``)."""
-        response = await self._http.get("/models")
+        """Запрашивает список моделей у LM Studio (``GET /v1/models``).
+
+        Ключ API передаётся в заголовке ``Authorization: Bearer ...`` — это
+        необходимо для удалённых OpenAI-совместимых эндпоинтов (LM Studio на
+        localhost ключ игнорирует, но лишним заголовок не будет).
+        """
+        response = await self._http.get(
+            "/models",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+        )
+        if response.status_code in (401, 403):
+            raise LmStudioError(
+                f"Сервер {self.base_url} отклонил запрос /models (HTTP {response.status_code}). "
+                "Проверьте переменную FLASH_VLM_LMSTUDIO_API_KEY — переданный ключ не был принят."
+            )
         response.raise_for_status()
         payload = response.json()
         models: list[str] = []

@@ -37,7 +37,13 @@ class VisionClient(ABC):
         """Выбирает модель: переданную явно или первую доступную."""
         if preferred:
             return preferred
-        models = await self.list_models()
+        try:
+            models = await self.list_models()
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"Не удалось получить список моделей: {exc}. "
+                "Укажите модель явно через FLASH_VLM_MODEL (или параметр --model / поле 'model')."
+            ) from exc
         if not models:
             raise RuntimeError(
                 "В LM Studio не найдено ни одной модели. Загрузите модель (например, "
