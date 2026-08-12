@@ -1,0 +1,53 @@
+# Flash-VLM DocParser — локальный стек.
+#
+#   docker compose up -d            # только REST API (порт 8000)
+#   docker compose --profile ui up  # API + Streamlit UI (порт 8501)
+#
+# LM Studio работает на хосте; контейнер обращается к нему через
+# host.docker.internal (на Linux включён host-gateway).
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${FLASH_VLM_API_PORT:-8000}:8000"
+    environment:
+      FLASH_VLM_LMSTUDIO_BASE_URL: ${FLASH_VLM_LMSTUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
+      FLASH_VLM_LMSTUDIO_API_KEY: ${FLASH_VLM_LMSTUDIO_API_KEY:-lm-studio}
+      FLASH_VLM_MODEL: ${FLASH_VLM_MODEL:-}
+      FLASH_VLM_IMAGE_WIDTH: ${FLASH_VLM_IMAGE_WIDTH:-512}
+      FLASH_VLM_CONCURRENCY: ${FLASH_VLM_CONCURRENCY:-1}
+      FLASH_VLM_USE_CACHE: ${FLASH_VLM_USE_CACHE:-true}
+      FLASH_VLM_CACHE_DIR: /app/.cache
+      FLASH_VLM_OUTPUT_DIR: /app/output
+      FLASH_VLM_FAKE_VLM: ${FLASH_VLM_FAKE_VLM:-false}
+    volumes:
+      - ./output:/app/output
+      - flash_vlm_cache:/app/.cache
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    profiles: ["ui"]
+    ports:
+      - "${FLASH_VLM_UI_PORT:-8501}:8501"
+    environment:
+      FLASH_VLM_LMSTUDIO_BASE_URL: ${FLASH_VLM_LMSTUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
+      FLASH_VLM_LMSTUDIO_API_KEY: ${FLASH_VLM_LMSTUDIO_API_KEY:-lm-studio}
+      FLASH_VLM_MODEL: ${FLASH_VLM_MODEL:-}
+      FLASH_VLM_IMAGE_WIDTH: ${FLASH_VLM_IMAGE_WIDTH:-512}
+      FLASH_VLM_CONCURRENCY: ${FLASH_VLM_CONCURRENCY:-1}
+      FLASH_VLM_FAKE_VLM: ${FLASH_VLM_FAKE_VLM:-false}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - api
+
+volumes:
+  flash_vlm_cache:

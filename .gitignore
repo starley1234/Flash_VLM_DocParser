@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+wheelhouse/
+
+# Виртуальные окружения
+.venv/
+venv/
+env/
+
+# Тесты / линтеры
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.coverage.*
+
+# Переменные окружения
+.env
+.env.local
+.env.*.local
+
+# Артефакты приложения
+.cache/
+output/
+*.log
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

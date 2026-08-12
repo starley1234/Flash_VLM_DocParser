@@ -1,0 +1,72 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "flash-vlm-docparser"
+version = "0.1.0"
+description = "Локальный PDF→Markdown конвейер на базе VLM (LM Studio): очередь задач, REST API и MCP-сервер."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Flash-VLM DocParser contributors" },
+]
+keywords = ["ocr", "vlm", "pdf", "markdown", "lm-studio", "mcp", "llama-vision", "qwen2-vl"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Topic :: Text Processing :: Markup :: Markdown",
+]
+
+dependencies = [
+    "pymupdf>=1.24.0",
+    "pillow>=10.2.0",
+    "openai>=1.30.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.0.0",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.27.0",
+    "python-multipart>=0.0.9",
+    "mcp>=2.0.0",
+    "pdf2image>=1.17.0",
+]
+
+[project.optional-dependencies]
+ui = ["streamlit>=1.33.0"]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+flash-vlm = "flash_vlm.cli:main"
+flash-vlm-api = "flash_vlm.api.app:main"
+flash-vlm-mcp = "flash_vlm.mcp.server:main"
+flash-vlm-ui = "flash_vlm.ui.streamlit_app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/flash_vlm"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "README.md", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
