@@ -51,6 +51,7 @@ class Pipeline:
         use_cache: bool | None = None,
         job_id: str | None = None,
         source_name: str | None = None,
+        image_width: int | None = None,
         on_progress: ProgressCallback | None = None,
     ) -> ConversionResult:
         """Конвертирует PDF в Markdown.
@@ -66,6 +67,7 @@ class Pipeline:
             use_cache: использовать кеш страниц (``None`` = из настроек).
             job_id: идентификатор задачи для кеша (``None`` = вычислить).
             source_name: имя исходного файла для frontmatter (``None`` = имя pdf_path).
+            image_width: ширина изображения для этого запуска (``None`` = из настроек).
             on_progress: колбэк ``(done, total, page_result)`` после каждой страницы.
         """
         started_at = now_ms()
@@ -78,6 +80,15 @@ class Pipeline:
         model = await self.client.resolve_model(model or self.settings.model or None)
         logger.info("Модель для распознавания: %s", model)
 
+        # Ширину изображения можно переопределить для конкретного запуска.
+        pdf_proc = self.pdf
+        if image_width is not None and image_width > 0 and image_width != self.pdf.width:
+            pdf_proc = PdfProcessor(
+                dpi=self.settings.render_dpi,
+                width=image_width,
+                backend=self.settings.render_backend,
+            )
+
         out_path = self._resolve_output_path(pdf_path, output_path)
 
         # Уменьшенные изображения страниц сохраняются на диск, чтобы можно было
@@ -87,15 +98,15 @@ class Pipeline:
             pages_dir = pages_dir_for(out_path)
             ensure_dir(pages_dir)
 
-        total_pages = self.pdf.page_count(pdf_path)
+        total_pages = pdf_proc.page_count(pdf_path)
         page_numbers = parse_pages(pages, total_pages)
-        images = self.pdf.render(pdf_path, pages=page_numbers)
+        images = pdf_proc.render(pdf_path, pages=page_numbers)
 
         if pages_dir is not None:
             for image in images:
                 image.image.save(pages_dir / f"page_{image.page_number:04d}.png")
 
-        job_id = job_id or self._compute_job_id(pdf_path, model, prompt, page_numbers)
+        job_id = job_id or self._compute_job_id(pdf_path, model, prompt, page_numbers, pdf_proc.width)
         cache = PageCache(
             self.settings.cache_dir,
             enabled=self.settings.use_cache if use_cache is None else use_cache,
@@ -202,13 +213,20 @@ class Pipeline:
             out = pdf_path.with_suffix(".md")
         return out
 
-    def _compute_job_id(self, pdf_path: Path, model: str, prompt: str, pages: list[int]) -> str:
+    def _compute_job_id(
+        self,
+        pdf_path: Path,
+        model: str,
+        prompt: str,
+        pages: list[int],
+        width: int,
+    ) -> str:
         stat = pdf_path.stat()
         return sha1_hex(
             pdf_path.resolve(),
             stat.st_mtime_ns,
             stat.st_size,
-            self.settings.image_width,
+            width,
             self.settings.render_dpi,
             self.settings.render_backend,
             model,

@@ -34,7 +34,7 @@ from ..factory import build_pipeline
 from ..jobs import JobManager
 from ..mcp.server import create_mcp_server
 from ..schemas import Job, JobStatus
-from ..utils import decode_base64_image, ensure_dir, pages_dir_for
+from ..utils import decode_base64_image, ensure_dir, pages_dir_for, parse_pages
 
 __all__ = ["create_app", "main"]
 
@@ -46,141 +46,422 @@ INDEX_HTML = r"""<!doctype html>
 <title>Flash-VLM DocParser</title>
 <style>
   :root { color-scheme: light; }
-  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 0 auto; padding: 24px;
-         background: #ffffff; color: #1f2328; }
-  h1 { margin-bottom: 4px; }
-  .sub { color: #57606a; margin-top: 0; }
-  .panel { border: 1px solid #d0d7de; border-radius: 8px; padding: 16px; display: flex;
-           flex-wrap: wrap; gap: 12px; align-items: flex-end; background: #f6f8fa; }
-  .field { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
-  input[type=text] { padding: 6px; border: 1px solid #d0d7de; border-radius: 4px;
-                     background: #ffffff; color: #1f2328; }
-  textarea { width: 100%; padding: 8px; border: 1px solid #d0d7de; border-radius: 6px;
-             font-family: ui-monospace, monospace; font-size: 13px; background: #ffffff; color: #1f2328; }
-  button { padding: 8px 16px; border: 0; border-radius: 6px; background: #2f81f7;
-           color: white; cursor: pointer; font-size: 15px; }
-  button:disabled { background: #555; cursor: wait; }
-  #status { margin: 16px 0; font-size: 15px; min-height: 1.4em; }
-  pre { background: #1f2328; color: #f0f6fc; border: 1px solid #30363d; border-radius: 8px;
-        padding: 16px; white-space: pre-wrap; overflow: auto; max-height: 60vh; font-size: 13px; }
-  a.download { display: inline-block; margin-top: 12px; color: #0969da; }
-  .error { color: #d1242f; }
-  #gallery { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
-  .page-fig { margin: 0; text-align: center; }
-  .page-fig img { max-width: 150px; max-height: 200px; border: 1px solid #d0d7de;
-                  border-radius: 4px; background: #fff; }
-  .page-fig figcaption { font-size: 12px; color: #57606a; margin-top: 2px; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         margin: 0 auto; max-width: 1200px; padding: 20px; background: #f6f8fa; color: #1f2328; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+           margin-bottom: 12px; flex-wrap: wrap; }
+  .brand h1 { font-size: 20px; margin: 0; }
+  .sub { color: #57606a; margin: 2px 0 0; font-size: 13px; }
+  .btn { display: inline-block; padding: 8px 16px; border-radius: 6px; background: #2f81f7;
+         color: #fff; cursor: pointer; font-size: 14px; border: 0; text-decoration: none; }
+  .btn:hover { background: #1a68d8; }
+  .btn.disabled { background: #9bb7e0; pointer-events: none; }
+
+  details.settings { background: #fff; border: 1px solid #d0d7de; border-radius: 8px; margin-bottom: 16px; }
+  details.settings summary { padding: 10px 14px; cursor: pointer; font-weight: 600; font-size: 14px; user-select: none; }
+  details.settings summary:hover { background: #f6f8fa; }
+  .settings-grid { display: flex; flex-wrap: wrap; gap: 12px; padding: 4px 14px 14px; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+  .field.grow { flex: 1 1 320px; }
+  .field > span { color: #57606a; }
+  .field input[type=text], .field input[type=number], .field textarea {
+    padding: 7px 9px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; color: #1f2328;
+    font-family: inherit; font-size: 13px; }
+  .field textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; resize: vertical; width: 100%; }
+  .field input[type=number] { width: 110px; }
+  .field.check { flex-direction: row; align-items: center; gap: 6px; padding-bottom: 7px; }
+
+  .layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+
+  aside.docs { background: #fff; border: 1px solid #d0d7de; border-radius: 8px; overflow: hidden; }
+  aside.docs h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #57606a;
+                  margin: 0; padding: 12px 14px 8px; }
+  .doc-list { max-height: 72vh; overflow-y: auto; }
+  .empty { color: #8b949e; font-size: 13px; padding: 12px 14px; margin: 0; }
+
+  .doc { border-top: 1px solid #eaeef2; }
+  .doc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+              padding: 9px 12px; cursor: pointer; }
+  .doc-head:hover { background: #f6f8fa; }
+  .doc-head.selected { background: #eef4fe; }
+  .doc-name { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .doc-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .progress { font-size: 12px; color: #57606a; }
+
+  .badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+  .badge.queued { background: #eaeef2; color: #57606a; }
+  .badge.running { background: #fff3d6; color: #9a6700; }
+  .badge.done { background: #dafbe1; color: #116329; }
+  .badge.error { background: #ffebe9; color: #cf222e; }
+
+  .pages { padding: 0 0 8px; }
+  .pages-empty { font-size: 12px; color: #8b949e; padding: 4px 14px; }
+  .page { display: flex; align-items: center; gap: 8px; padding: 4px 14px 4px 24px; cursor: pointer; font-size: 13px; }
+  .page:hover { background: #f6f8fa; }
+  .page.selected { background: #eef4fe; }
+  .page-num { color: #1f2328; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dot.done { background: #2da44e; }
+  .dot.error { background: #cf222e; }
+  .dot.pending { background: #d0d7de; }
+  .dot.processing { background: #d4a72c; animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  main.content { background: #fff; border: 1px solid #d0d7de; border-radius: 8px; padding: 14px; min-height: 60vh; }
+  .empty-state { color: #8b949e; text-align: center; padding: 60px 20px; font-size: 14px; }
+  .content-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .content-head h2 { font-size: 16px; margin: 0; word-break: break-word; }
+  #download-link { font-size: 13px; color: #0969da; text-decoration: none; }
+  #download-link:hover { text-decoration: underline; }
+
+  pre { background: #1f2328; color: #f0f6fc; border-radius: 8px; padding: 14px; white-space: pre-wrap;
+        word-break: break-word; overflow: auto; max-height: 65vh; font-size: 13px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 0; }
+  .page-preview { margin: 0 0 12px; }
+  .page-preview img { max-width: 320px; width: 100%; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; }
+  .page-preview figcaption { font-size: 12px; color: #57606a; margin-top: 4px; }
+  #upload-status { font-size: 13px; color: #57606a; }
 </style>
 </head>
 <body>
-  <h1>Flash-VLM DocParser</h1>
-  <p class="sub">PDF → Markdown через локальные VLM (LM Studio)</p>
-
-  <div class="panel">
-    <div class="field">
-      <label for="file">PDF-файл</label>
-      <input type="file" id="file" accept=".pdf,application/pdf"/>
-    </div>
-    <div class="field">
-      <label for="pages">Страницы (напр. 1-5,8)</label>
-      <input type="text" id="pages" placeholder="все"/>
-    </div>
-    <label><input type="checkbox" id="markers"/> маркеры страниц</label>
-    <button id="go" onclick="convert()">Конвертировать</button>
+<header>
+  <div class="brand">
+    <h1>Flash-VLM DocParser</h1>
+    <p class="sub">PDF → Markdown · локальные VLM</p>
   </div>
-
-  <div class="field" style="margin-top:12px;">
-    <label for="prompt">Системный промпт (необязательно)</label>
-    <textarea id="prompt" rows="5" placeholder="Оставьте пустым для промпта по умолчанию"></textarea>
+  <div class="header-actions">
+    <span id="upload-status"></span>
+    <label class="btn" id="add-btn" for="file-input">+ Добавить документ</label>
+    <input type="file" id="file-input" accept=".pdf,application/pdf" multiple hidden/>
   </div>
+</header>
 
-  <div id="status"></div>
-  <div id="gallery"></div>
-  <div id="download"></div>
-  <pre id="result" hidden></pre>
+<details class="settings" id="settings">
+  <summary>Настройки</summary>
+  <div class="settings-grid">
+    <label class="field grow">
+      <span>Системный промпт</span>
+      <textarea id="prompt" rows="4"></textarea>
+    </label>
+    <label class="field">
+      <span>Ширина, px</span>
+      <input type="number" id="width" min="128" max="4096" step="64"/>
+    </label>
+    <label class="field">
+      <span>Модель</span>
+      <input type="text" id="model" placeholder="авто (из .env)"/>
+    </label>
+    <label class="field check">
+      <input type="checkbox" id="markers"/>
+      <span>маркеры страниц</span>
+    </label>
+  </div>
+</details>
+
+<div class="layout">
+  <aside class="docs">
+    <h2>Документы</h2>
+    <div id="doc-list" class="doc-list"><p class="empty">Нет документов</p></div>
+  </aside>
+  <main class="content">
+    <div id="content-empty" class="empty-state">Загрузите PDF, чтобы начать распознавание</div>
+    <div id="content" hidden>
+      <div class="content-head">
+        <h2 id="content-title"></h2>
+        <span id="content-status" class="badge queued"></span>
+        <a id="download-link" hidden>Скачать .md</a>
+      </div>
+      <div id="content-body"></div>
+    </div>
+  </main>
+</div>
 
 <script>
-async function convert() {
-  const file = document.getElementById('file').files[0];
-  if (!file) { alert('Выберите PDF-файл'); return; }
-  const status = document.getElementById('status');
-  const button = document.getElementById('go');
-  const result = document.getElementById('result');
-  const gallery = document.getElementById('gallery');
-  result.hidden = true;
-  result.textContent = '';
-  gallery.innerHTML = '';
-  document.getElementById('download').innerHTML = '';
-  button.disabled = true;
+const $ = id => document.getElementById(id);
+const NL = '\n';
+const LABELS = { queued: 'в очереди', running: 'обработка', done: 'готово', error: 'ошибка' };
 
+const state = {
+  jobs: new Map(),
+  selectedDoc: null,
+  selectedPage: null,
+  expanded: new Set(),
+  busy: false,
+};
+
+async function api(url, opts) {
+  const res = await fetch(url, opts);
+  if (!res.ok) {
+    let detail = 'HTTP ' + res.status;
+    try { detail = (await res.json()).detail || detail; } catch (e) {}
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+function badge(status) {
+  const b = document.createElement('span');
+  b.className = 'badge ' + status;
+  b.textContent = LABELS[status] || status;
+  return b;
+}
+
+async function init() {
+  try {
+    const s = await api('/settings');
+    $('prompt').value = s.prompt || '';
+    $('width').value = s.image_width || 512;
+    $('model').value = s.model || '';
+  } catch (e) { /* настройки не загрузились — оставляем поля пустыми */ }
+  $('file-input').addEventListener('change', onFiles);
+  tick();
+}
+
+async function onFiles(ev) {
+  const files = Array.from(ev.target.files || []);
+  ev.target.value = '';
+  if (!files.length) return;
+  const status = $('upload-status');
+  const btn = $('add-btn');
+  btn.classList.add('disabled');
+  try {
+    for (const f of files) {
+      status.textContent = 'Загрузка: ' + f.name;
+      await upload(f);
+    }
+  } catch (e) {
+    alert('Ошибка загрузки: ' + e.message);
+  } finally {
+    status.textContent = '';
+    btn.classList.remove('disabled');
+  }
+}
+
+async function upload(file) {
   const fd = new FormData();
   fd.append('file', file);
-  fd.append('pages', document.getElementById('pages').value);
-  fd.append('page_markers', document.getElementById('markers').checked);
-  fd.append('prompt', document.getElementById('prompt').value);
+  fd.append('prompt', $('prompt').value);
+  fd.append('model', $('model').value);
+  fd.append('image_width', $('width').value || '512');
+  fd.append('page_markers', $('markers').checked);
+  const job = await api('/convert', { method: 'POST', body: fd });
+  state.selectedDoc = job.job_id;
+  state.selectedPage = null;
+  state.expanded.add(job.job_id);
+  await refresh();
+}
 
+function selectDoc(id) {
+  if (state.selectedDoc === id) {
+    if (state.expanded.has(id)) state.expanded.delete(id);
+    else state.expanded.add(id);
+  } else {
+    state.selectedDoc = id;
+    state.expanded.add(id);
+  }
+  state.selectedPage = null;
+  renderDocList();
+  refreshContent();
+}
+
+function selectPage(id, n) {
+  state.selectedDoc = id;
+  state.selectedPage = n;
+  state.expanded.add(id);
+  renderDocList();
+  refreshContent();
+}
+
+function docItem(j) {
+  const wrap = document.createElement('div');
+  wrap.className = 'doc';
+
+  const head = document.createElement('div');
+  head.className = 'doc-head' + (j.id === state.selectedDoc ? ' selected' : '');
+  head.onclick = () => selectDoc(j.id);
+
+  const name = document.createElement('div');
+  name.className = 'doc-name';
+  name.textContent = j.filename;
+  name.title = j.filename;
+
+  const meta = document.createElement('div');
+  meta.className = 'doc-meta';
+  meta.appendChild(badge(j.status));
+  const prog = document.createElement('span');
+  prog.className = 'progress';
+  prog.textContent = j.total ? (j.done + '/' + j.total) : '…';
+  meta.appendChild(prog);
+
+  head.appendChild(name);
+  head.appendChild(meta);
+  wrap.appendChild(head);
+
+  if (state.expanded.has(j.id)) wrap.appendChild(pagesList(j));
+  return wrap;
+}
+
+function pagesList(j) {
+  const wrap = document.createElement('div');
+  wrap.className = 'pages';
+  const nums = j.page_numbers || [];
+  if (!nums.length) {
+    const p = document.createElement('div');
+    p.className = 'pages-empty';
+    p.textContent = 'страницы появятся после запуска…';
+    wrap.appendChild(p);
+    return wrap;
+  }
+  const byPage = {};
+  for (const p of (j.pages || [])) byPage[p.page] = p;
+  for (const n of nums) {
+    const row = document.createElement('div');
+    row.className = 'page' + (j.id === state.selectedDoc && state.selectedPage === n ? ' selected' : '');
+    row.onclick = () => selectPage(j.id, n);
+
+    const info = byPage[n];
+    let cls = 'dot pending';
+    if (info && info.done) cls = info.ok ? 'dot done' : 'dot error';
+    else if (j.status === 'running' && j.current_page === n) cls = 'dot processing';
+
+    const dot = document.createElement('span');
+    dot.className = cls;
+    const label = document.createElement('span');
+    label.className = 'page-num';
+    label.textContent = 'Стр. ' + n;
+    row.appendChild(dot);
+    row.appendChild(label);
+    wrap.appendChild(row);
+  }
+  return wrap;
+}
+
+function renderDocList() {
+  const list = $('doc-list');
+  list.replaceChildren();
+  const jobs = Array.from(state.jobs.values()).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  if (!jobs.length) {
+    const p = document.createElement('p');
+    p.className = 'empty';
+    p.textContent = 'Нет документов — добавьте PDF.';
+    list.appendChild(p);
+    return;
+  }
+  for (const j of jobs) list.appendChild(docItem(j));
+}
+
+function setStatus(status) {
+  const el = $('content-status');
+  el.className = 'badge ' + status;
+  el.textContent = LABELS[status] || status;
+}
+
+function renderDoc(job) {
+  $('content-title').textContent = job.filename;
+  setStatus(job.status);
+  const dl = $('download-link');
+  dl.hidden = job.status !== 'done';
+  if (job.status === 'done') dl.href = '/jobs/' + job.id + '/download';
+
+  const pages = Array.from(job.completed_pages || []).sort((a, b) => a.page - b.page);
+  const parts = pages.map(p => {
+    const head = '--- Страница ' + p.page + ' ---';
+    return p.ok ? (head + NL + (p.markdown || '')) : (head + NL + '⚠️ Не распознана: ' + (p.error || 'ошибка'));
+  });
+  let text = parts.join(NL + NL);
+  if (!pages.length) text = (job.status === 'running' || job.status === 'queued') ? 'Подготовка…' : '(пусто)';
+  else if (job.status === 'running' || job.status === 'queued') text += NL + NL + '… распознавание продолжается';
+
+  const pre = document.createElement('pre');
+  pre.textContent = text;
+  $('content-body').replaceChildren(pre);
+}
+
+function renderPage(job, n) {
+  const page = (job.completed_pages || []).find(p => p.page === n);
+  $('content-title').textContent = job.filename + ' — стр. ' + n;
+  $('download-link').hidden = true;
+  const body = $('content-body');
+  body.replaceChildren();
+
+  if (!page) {
+    setStatus(job.status);
+    const pre = document.createElement('pre');
+    pre.textContent = 'Страница ещё не обработана…';
+    body.appendChild(pre);
+    return;
+  }
+
+  setStatus(page.ok ? 'done' : 'error');
+
+  const fig = document.createElement('figure');
+  fig.className = 'page-preview';
+  const a = document.createElement('a');
+  a.href = '/jobs/' + job.id + '/page/' + n;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  const img = document.createElement('img');
+  img.src = '/jobs/' + job.id + '/page/' + n;
+  img.alt = 'Страница ' + n;
+  a.appendChild(img);
+  const cap = document.createElement('figcaption');
+  cap.textContent = (page.image_width ? (page.image_width + '×' + page.image_height + ' px · ') : '') + 'открыть в новом окне';
+  fig.appendChild(a);
+  fig.appendChild(cap);
+  body.appendChild(fig);
+
+  const pre = document.createElement('pre');
+  pre.textContent = page.ok ? (page.markdown || '(пустая страница)') : ('⚠️ Не распознана: ' + (page.error || 'ошибка'));
+  body.appendChild(pre);
+}
+
+async function refreshContent() {
+  const id = state.selectedDoc;
+  const empty = $('content-empty');
+  const content = $('content');
+  if (!id) {
+    content.hidden = true;
+    empty.hidden = false;
+    return;
+  }
+  empty.hidden = true;
+  content.hidden = false;
+
+  let job;
   try {
-    const res = await fetch('/convert', { method: 'POST', body: fd });
-    const job = await res.json();
-    if (!res.ok) throw new Error(job.detail || 'Ошибка загрузки');
-    await poll(job.job_id, status);
+    job = await api('/jobs/' + id);
   } catch (e) {
-    status.innerHTML = '<span class="error">Ошибка: ' + e.message + '</span>';
-  } finally {
-    button.disabled = false;
+    const summary = state.jobs.get(id);
+    $('content-title').textContent = summary ? summary.filename : id;
+    setStatus('error');
+    $('content-body').replaceChildren();
+    return;
   }
+  state.jobs.set(id, Object.assign({}, state.jobs.get(id) || {}, job));
+  if (state.selectedPage != null) renderPage(job, state.selectedPage);
+  else renderDoc(job);
 }
 
-async function poll(id, status) {
-  const pre = document.getElementById('result');
-  const gallery = document.getElementById('gallery');
-  const rendered = new Set();
-  while (true) {
-    const r = await fetch('/jobs/' + id);
-    const j = await r.json();
-    status.textContent = 'Статус: ' + j.status + ' — страница ' + j.current_page +
-      ' из ' + j.total + ' (' + j.done + '/' + j.total + ')';
-
-    // Потоково добавляем готовые страницы (текст + уменьшенное изображение).
-    for (const p of (j.completed_pages || [])) {
-      if (rendered.has(p.page)) continue;
-      rendered.add(p.page);
-
-      let block = '\n\n--- Страница ' + p.page + ' ---\n\n';
-      if (p.ok) block += p.markdown || '';
-      else block += '⚠️ Страница ' + p.page + ' не распознана: ' + (p.error || 'неизвестная ошибка');
-      pre.textContent += block;
-      pre.hidden = false;
-      pre.scrollTop = pre.scrollHeight;
-
-      const fig = document.createElement('figure');
-      fig.className = 'page-fig';
-      const a = document.createElement('a');
-      a.href = '/jobs/' + id + '/page/' + p.page;
-      a.target = '_blank';
-      const img = document.createElement('img');
-      img.src = '/jobs/' + id + '/page/' + p.page;
-      img.alt = 'Страница ' + p.page;
-      a.appendChild(img);
-      const cap = document.createElement('figcaption');
-      cap.textContent = 'Стр. ' + p.page + ' — ' + (p.image_width || '?') + '×' + (p.image_height || '?') + ' px';
-      fig.appendChild(a);
-      fig.appendChild(cap);
-      gallery.appendChild(fig);
-    }
-
-    if (j.status === 'done') {
-      document.getElementById('download').innerHTML =
-        '<a class="download" href="/jobs/' + id + '/download" download>Скачать .md</a>';
-      status.textContent = 'Готово: ' + j.done + ' из ' + j.total + ' страниц распознано.';
-      break;
-    } else if (j.status === 'error') {
-      status.innerHTML = '<span class="error">Ошибка: ' + (j.error || 'неизвестная') + '</span>';
-      break;
-    }
-    await new Promise(r => setTimeout(r, 800));
-  }
+async function refresh() {
+  const data = await api('/jobs');
+  const seen = new Set();
+  for (const j of data.jobs) { state.jobs.set(j.id, j); seen.add(j.id); }
+  for (const id of Array.from(state.jobs.keys())) if (!seen.has(id)) state.jobs.delete(id);
+  renderDocList();
+  await refreshContent();
 }
+
+async function tick() {
+  if (state.busy) return;
+  state.busy = true;
+  try { await refresh(); } catch (e) { /* сетевая пауза — пропускаем */ }
+  finally { state.busy = false; }
+  setTimeout(tick, 700);
+}
+
+init();
 </script>
 </body>
 </html>
@@ -191,6 +472,21 @@ class OcrRequest(BaseModel):
     image_base64: str
     prompt: str | None = None
     model: str | None = None
+
+
+def _job_summary(job: Job) -> dict:
+    """Краткое представление задачи для списка документов.
+
+    ``completed_pages`` с полным текстом не включается (тяжёлый); вместо него —
+    компактный список статусов страниц ``pages``.
+    """
+    data = job.model_dump(exclude={"result", "completed_pages"})
+    by_page = {p.page: p for p in job.completed_pages}
+    data["pages"] = [
+        {"page": n, "done": n in by_page, "ok": by_page[n].ok if n in by_page else None}
+        for n in job.page_numbers
+    ]
+    return data
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -231,6 +527,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         page_markers: bool,
         use_cache: bool | None,
         prompt: str | None,
+        image_width: int | None,
     ) -> None:
         job: Job | None = jobs.get(job_id)
         if job is None:
@@ -245,6 +542,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # эндпоинт /page/{n} мог отдавать их по мере готовности.
                 job.pages_dir = str(pages_dir_for(output_path))
                 ensure_dir(Path(job.pages_dir))
+
+            # Список страниц известен до запуска — для иерархии «документ → страницы».
+            total_pages = pipeline.pdf.page_count(pdf_path)
+            job.page_numbers = parse_pages(pages, total_pages)
+            job.total = len(job.page_numbers)
 
             def on_progress(done: int, total: int, result) -> None:
                 job.done = done
@@ -261,6 +563,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 use_cache=use_cache,
                 output_path=output_path,
                 source_name=job.filename,
+                image_width=image_width,
                 on_progress=on_progress,
             )
             job.result = result
@@ -324,6 +627,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         page_markers: bool = Form(False),
         use_cache: bool | None = Form(None),
         prompt: str | None = Form(None),
+        image_width: int | None = Form(None),
     ) -> dict:
         if not (file.filename or "").lower().endswith(".pdf"):
             raise HTTPException(status_code=400, detail="Ожидается файл с расширением .pdf")
@@ -339,7 +643,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         job = jobs.create(file.filename or "document.pdf")
         task = asyncio.create_task(
-            run_job(job.id, pdf_path, model or None, pages, page_markers, use_cache, prompt or None)
+            run_job(job.id, pdf_path, model or None, pages, page_markers, use_cache, prompt or None, image_width)
         )
         jobs.bind_task(job.id, task)
 
@@ -351,9 +655,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "result_url": f"/jobs/{job.id}/result",
         }
 
+    @app.get("/settings")
+    async def get_ui_settings() -> dict:
+        """Настройки по умолчанию для предзаполнения UI (промпт, ширина, модель)."""
+        return {
+            "prompt": prompts.DEFAULT_SYSTEM_PROMPT,
+            "image_width": settings.image_width,
+            "model": settings.model,
+            "lmstudio_base_url": settings.lmstudio_base_url,
+            "concurrency": settings.concurrency,
+            "fake_vlm": settings.fake_vlm,
+        }
+
     @app.get("/jobs")
     async def list_jobs() -> dict:
-        return {"jobs": [j.model_dump(exclude={"result", "completed_pages"}) for j in jobs.list()]}
+        return {"jobs": [_job_summary(j) for j in jobs.list()]}
 
     @app.get("/jobs/{job_id}")
     async def get_job(job_id: str) -> dict:

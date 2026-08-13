@@ -59,6 +59,8 @@ class Job(BaseModel):
     total: int = 0
     done: int = 0
     current_page: int = 0
+    # Номера страниц, запланированных к обработке (для иерархии в UI).
+    page_numbers: list[int] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=_utcnow)
     started_at: datetime | None = None
     finished_at: datetime | None = None

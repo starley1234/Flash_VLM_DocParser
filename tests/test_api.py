@@ -43,9 +43,45 @@ def test_index_html_js_has_no_broken_string_literals(tmp_path):
     client = make_client(tmp_path)
     html = client.get("/").text
     # В отдаваемом HTML должен быть литеральный escape \n (backslash + n)...
-    assert "let block = '\\n\\n--- Страница '" in html
+    assert "const NL = '\\n';" in html
     # ...и не должно быть реального переноса строки внутри JS-литерала.
-    assert "let block = '\n" not in html
+    assert "const NL = '\n" not in html
+
+
+def test_settings_endpoint(tmp_path):
+    """UI получает текущий промпт, ширину и модель для предзаполнения."""
+    client = make_client(tmp_path)
+    response = client.get("/settings")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["prompt"]
+    assert body["image_width"] == 512
+    assert body["model"] == ""
+
+
+def test_jobs_list_has_compact_pages(tmp_path, sample_pdf):
+    """Список задач отдаёт компактные статусы страниц (без тяжёлого текста)."""
+    client = make_client(tmp_path)
+    with sample_pdf.open("rb") as handle:
+        resp = client.post(
+            "/convert",
+            files={"file": ("sample.pdf", handle, "application/pdf")},
+            data={"pages": "1,3"},
+        )
+    job_id = resp.json()["job_id"]
+
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        summary = next(j for j in client.get("/jobs").json()["jobs"] if j["id"] == job_id)
+        if summary["status"] in {"done", "error"}:
+            break
+        time.sleep(0.02)
+
+    assert summary["page_numbers"] == [1, 3]
+    assert summary["pages"] == [
+        {"page": 1, "done": True, "ok": True},
+        {"page": 3, "done": True, "ok": True},
+    ]
 
 
 def test_ocr_endpoint(tmp_path):
@@ -88,6 +124,8 @@ def test_convert_job_lifecycle(tmp_path, sample_pdf):
     first_page = status["completed_pages"][0]
     assert first_page["page"] == 1
     assert first_page["ok"] is True
+    # Номера страниц известны (для иерархии документ → страницы).
+    assert status["page_numbers"] == [1, 2, 3]
 
     result = client.get(f"/jobs/{job_id}/result")
     assert result.status_code == 200
