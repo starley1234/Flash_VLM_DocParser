@@ -38,7 +38,7 @@ from ..utils import decode_base64_image, ensure_dir, pages_dir_for
 
 __all__ = ["create_app", "main"]
 
-INDEX_HTML = """<!doctype html>
+INDEX_HTML = r"""<!doctype html>
 <html lang="ru">
 <head>
 <meta charset="utf-8"/>

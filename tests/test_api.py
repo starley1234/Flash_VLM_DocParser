@@ -37,6 +37,17 @@ def test_index_page(tmp_path):
     assert "Flash-VLM DocParser" in response.text
 
 
+def test_index_html_js_has_no_broken_string_literals(tmp_path):
+    """Регрессия: ``\\n`` внутри JS-строки не должен превращаться Python-парсером
+    в реальный перенос строки (иначе браузер падает с SyntaxError)."""
+    client = make_client(tmp_path)
+    html = client.get("/").text
+    # В отдаваемом HTML должен быть литеральный escape \n (backslash + n)...
+    assert "let block = '\\n\\n--- Страница '" in html
+    # ...и не должно быть реального переноса строки внутри JS-литерала.
+    assert "let block = '\n" not in html
+
+
 def test_ocr_endpoint(tmp_path):
     client = make_client(tmp_path)
     buf = io.BytesIO()
