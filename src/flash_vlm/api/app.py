@@ -52,6 +52,8 @@ INDEX_HTML = """<!doctype html>
            flex-wrap: wrap; gap: 12px; align-items: flex-end; }
   .field { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
   input[type=text] { padding: 6px; border: 1px solid #666; border-radius: 4px; }
+  textarea { width: 100%; padding: 8px; border: 1px solid #666; border-radius: 6px;
+             font-family: ui-monospace, monospace; font-size: 13px; }
   button { padding: 8px 16px; border: 0; border-radius: 6px; background: #2f81f7;
            color: white; cursor: pointer; font-size: 15px; }
   button:disabled { background: #555; cursor: wait; }
@@ -72,15 +74,16 @@ INDEX_HTML = """<!doctype html>
       <input type="file" id="file" accept=".pdf,application/pdf"/>
     </div>
     <div class="field">
-      <label for="model">Модель (пусто = авто)</label>
-      <input type="text" id="model" placeholder="auto"/>
-    </div>
-    <div class="field">
       <label for="pages">Страницы (напр. 1-5,8)</label>
       <input type="text" id="pages" placeholder="все"/>
     </div>
     <label><input type="checkbox" id="markers"/> маркеры страниц</label>
     <button id="go" onclick="convert()">Конвертировать</button>
+  </div>
+
+  <div class="field" style="margin-top:12px;">
+    <label for="prompt">Системный промпт (необязательно)</label>
+    <textarea id="prompt" rows="5" placeholder="Оставьте пустым для промпта по умолчанию"></textarea>
   </div>
 
   <div id="status"></div>
@@ -100,9 +103,9 @@ async function convert() {
 
   const fd = new FormData();
   fd.append('file', file);
-  fd.append('model', document.getElementById('model').value);
   fd.append('pages', document.getElementById('pages').value);
   fd.append('page_markers', document.getElementById('markers').checked);
+  fd.append('prompt', document.getElementById('prompt').value);
 
   try {
     const res = await fetch('/convert', { method: 'POST', body: fd });
@@ -187,6 +190,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pages: str | None,
         page_markers: bool,
         use_cache: bool | None,
+        prompt: str | None,
     ) -> None:
         job: Job | None = jobs.get(job_id)
         if job is None:
@@ -206,6 +210,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 pdf_path,
                 pages=pages,
                 model=model,
+                prompt=prompt or None,
                 page_markers=page_markers,
                 use_cache=use_cache,
                 output_path=output_path,
@@ -271,6 +276,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pages: str | None = Form(None),
         page_markers: bool = Form(False),
         use_cache: bool | None = Form(None),
+        prompt: str | None = Form(None),
     ) -> dict:
         if not (file.filename or "").lower().endswith(".pdf"):
             raise HTTPException(status_code=400, detail="Ожидается файл с расширением .pdf")
@@ -285,7 +291,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pdf_path.write_bytes(content)
 
         job = jobs.create(file.filename or "document.pdf")
-        task = asyncio.create_task(run_job(job.id, pdf_path, model or None, pages, page_markers, use_cache))
+        task = asyncio.create_task(
+            run_job(job.id, pdf_path, model or None, pages, page_markers, use_cache, prompt or None)
+        )
         jobs.bind_task(job.id, task)
 
         return {

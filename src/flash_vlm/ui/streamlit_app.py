@@ -16,6 +16,7 @@ except ImportError as exc:  # pragma: no cover
         "Streamlit не установлен. Установите: pip install 'flash-vlm-docparser[ui]'"
     ) from exc
 
+from .. import prompts
 from ..config import Settings, get_settings
 from ..factory import build_pipeline
 
@@ -24,7 +25,13 @@ st.set_page_config(page_title="Flash-VLM DocParser", layout="wide")
 _DEFAULT_SETTINGS = get_settings()
 
 
-def _run_conversion(pdf_bytes: bytes, filename: str, settings: Settings, pages: str | None) -> dict:
+def _run_conversion(
+    pdf_bytes: bytes,
+    filename: str,
+    settings: Settings,
+    pages: str | None,
+    prompt: str,
+) -> dict:
     pipeline = build_pipeline(settings)
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
@@ -38,10 +45,12 @@ def _run_conversion(pdf_bytes: bytes, filename: str, settings: Settings, pages: 
 
     async def run() -> dict:
         try:
+            # Модель не передаём: она берётся из .env (FLASH_VLM_MODEL)
+            # или определяется автоматически.
             result = await pipeline.convert(
                 tmp_path,
                 pages=pages or None,
-                model=settings.model or None,
+                prompt=prompt.strip() or None,
                 page_markers=settings.page_markers,
                 on_progress=on_progress,
             )
@@ -63,11 +72,10 @@ def main() -> None:
             "LM Studio API",
             value=_DEFAULT_SETTINGS.lmstudio_base_url,
         )
-        model = st.text_input(
-            "Модель (пусто = авто)",
-            value=_DEFAULT_SETTINGS.model,
-            help="По умолчанию берётся из FLASH_VLM_MODEL",
-        )
+        if _DEFAULT_SETTINGS.model:
+            st.caption(f"Модель (из FLASH_VLM_MODEL): **{_DEFAULT_SETTINGS.model}**")
+        else:
+            st.caption("Модель: автоопределение (FLASH_VLM_MODEL не задан)")
         width = st.slider(
             "Ширина изображения, px",
             256,
@@ -80,13 +88,20 @@ def main() -> None:
         use_cache = st.checkbox("Кешировать страницы", value=True)
         fake = st.checkbox("Демо-режим (без LM Studio)", value=_DEFAULT_SETTINGS.fake_vlm)
 
+    st.subheader("Системный промпт")
+    prompt = st.text_area(
+        "Промпт для распознавания (VLM)",
+        value=prompts.DEFAULT_SYSTEM_PROMPT,
+        height=180,
+        help="Правила, по которым VLM преобразует страницу в Markdown",
+    )
+
     uploaded = st.file_uploader("Загрузите PDF-файл", type=["pdf"])
     pages = st.text_input("Страницы (необязательно), напр. 1-5,8", value="")
 
     if uploaded is not None and st.button("Конвертировать", type="primary"):
         settings = Settings(
             lmstudio_base_url=base_url,
-            model=model,
             image_width=width,
             concurrency=concurrency,
             page_markers=page_markers,
@@ -95,7 +110,7 @@ def main() -> None:
         )
         with st.spinner("Конвертация…"):
             try:
-                result = _run_conversion(uploaded.getvalue(), uploaded.name, settings, pages)
+                result = _run_conversion(uploaded.getvalue(), uploaded.name, settings, pages, prompt)
             except Exception as exc:  # noqa: BLE001
                 st.error(f"Ошибка: {exc}")
                 return
