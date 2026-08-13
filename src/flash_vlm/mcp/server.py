@@ -111,9 +111,9 @@ def create_mcp_server(settings: Settings | None = None, pipeline: Pipeline | Non
         page_markers: bool = False,
         ctx: Context | None = None,
     ) -> str:
-        def on_progress(done: int, total: int, current_page: int) -> None:
+        def on_progress(done: int, total: int, result) -> None:
             asyncio.get_running_loop().create_task(
-                _safe_report_progress(ctx, done, total, current_page)
+                _safe_report_progress(ctx, done, total, result.page)
             )
 
         result = await pipeline.convert(

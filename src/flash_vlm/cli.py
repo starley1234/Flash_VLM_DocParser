@@ -82,8 +82,8 @@ async def _convert(args: argparse.Namespace) -> int:
 
     pipeline = build_pipeline(settings)
 
-    def on_progress(done: int, total: int, current_page: int) -> None:
-        sys.stdout.write(f"\rОбработка страницы {current_page} из {total}... ")
+    def on_progress(done: int, total: int, result) -> None:
+        sys.stdout.write(f"\rОбработка страницы {result.page} из {total}... ")
         sys.stdout.flush()
 
     try:

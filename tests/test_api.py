@@ -72,10 +72,22 @@ def test_convert_job_lifecycle(tmp_path, sample_pdf):
     assert status["total"] == 3
     assert status["done"] == 3
 
+    # Потоковые результаты: completed_pages заполнены по мере распознавания.
+    assert len(status["completed_pages"]) == 3
+    first_page = status["completed_pages"][0]
+    assert first_page["page"] == 1
+    assert first_page["ok"] is True
+
     result = client.get(f"/jobs/{job_id}/result")
     assert result.status_code == 200
     assert result.json()["pages_total"] == 3
     assert result.json()["markdown"].startswith("---\n")
+
+    # Изображение уменьшенной страницы отдаётся по эндпоинту.
+    page_img = client.get(f"/jobs/{job_id}/page/1")
+    assert page_img.status_code == 200
+    assert page_img.headers["content-type"] == "image/png"
+    assert page_img.content[:8] == b"\x89PNG\r\n\x1a\n"
 
     download = client.get(f"/jobs/{job_id}/download")
     assert download.status_code == 200

@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     page_separator: str = "\n\n"
     page_markers: bool = False  # добавлять комментарии <!-- Page N -->
     add_frontmatter: bool = True  # добавлять YAML-frontmatter в итоговый .md
+    save_page_images: bool = True  # сохранять уменьшенные изображения страниц на диск
 
     # --- HTTP API ---------------------------------------------------------------
     api_host: str = "0.0.0.0"

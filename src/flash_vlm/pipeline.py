@@ -15,16 +15,16 @@ from .config import Settings
 from .pdf_processor import PageImage, PdfProcessor
 from .queue_manager import TaskQueue
 from .schemas import ConversionResult, PageResult
-from .utils import ensure_dir, now_ms, parse_pages, sha1_hex
+from .utils import ensure_dir, now_ms, pages_dir_for, parse_pages, sha1_hex
 from .vlm import VisionClient
 
 logger = logging.getLogger(__name__)
 
-# done, total, current_page — вызывается после каждой обработанной страницы.
+# (done, total, page_result) — вызывается после каждой обработанной страницы.
 # Может быть как синхронной, так и асинхронной функцией.
-ProgressCallback = Callable[[int, int, int], Awaitable[None] | None]
+ProgressCallback = Callable[[int, int, PageResult], Awaitable[None] | None]
 
-__all__ = ["Pipeline"]
+__all__ = ["Pipeline", "ProgressCallback"]
 
 
 class Pipeline:
@@ -66,7 +66,7 @@ class Pipeline:
             use_cache: использовать кеш страниц (``None`` = из настроек).
             job_id: идентификатор задачи для кеша (``None`` = вычислить).
             source_name: имя исходного файла для frontmatter (``None`` = имя pdf_path).
-            on_progress: колбэк прогресса ``(done, total, current_page)``.
+            on_progress: колбэк ``(done, total, page_result)`` после каждой страницы.
         """
         started_at = now_ms()
         pdf_path = Path(pdf_path)
@@ -78,12 +78,28 @@ class Pipeline:
         model = await self.client.resolve_model(model or self.settings.model or None)
         logger.info("Модель для распознавания: %s", model)
 
+        out_path = self._resolve_output_path(pdf_path, output_path)
+
+        # Уменьшенные изображения страниц сохраняются на диск, чтобы можно было
+        # проверить, что ресайз действительно применился (см. /jobs/{id}/page/{n}).
+        pages_dir: Path | None = None
+        if self.settings.save_page_images:
+            pages_dir = pages_dir_for(out_path)
+            ensure_dir(pages_dir)
+
         total_pages = self.pdf.page_count(pdf_path)
         page_numbers = parse_pages(pages, total_pages)
         images = self.pdf.render(pdf_path, pages=page_numbers)
 
+        if pages_dir is not None:
+            for image in images:
+                image.image.save(pages_dir / f"page_{image.page_number:04d}.png")
+
         job_id = job_id or self._compute_job_id(pdf_path, model, prompt, page_numbers)
-        cache = PageCache(self.settings.cache_dir, enabled=self.settings.use_cache if use_cache is None else use_cache)
+        cache = PageCache(
+            self.settings.cache_dir,
+            enabled=self.settings.use_cache if use_cache is None else use_cache,
+        )
 
         results: dict[int, PageResult] = {}
         done = 0
@@ -117,10 +133,16 @@ class Pipeline:
                     )
                 cache.set(job_id, image.page_number, result.model_dump())
 
+            # Привязываем информацию об уменьшенном изображении страницы.
+            result.image_width = image.width
+            result.image_height = image.height
+            if pages_dir is not None:
+                result.image_path = str(pages_dir / f"page_{image.page_number:04d}.png")
+
             results[image.page_number] = result
             done += 1
             if on_progress is not None:
-                await self._maybe_await(on_progress(done, len(images), image.page_number))
+                await self._maybe_await(on_progress(done, len(images), result))
 
         queue = TaskQueue(process_page, concurrency=self.settings.concurrency, maxsize=self.settings.queue_size)
         async with queue:
@@ -136,11 +158,13 @@ class Pipeline:
         )
         markdown = assembler.assemble(ordered, source=source_name or pdf_path.name, model=model)
 
-        out_path = self._write_output(pdf_path, output_path, markdown)
+        ensure_dir(out_path.parent)
+        out_path.write_text(markdown, encoding="utf-8")
 
         return ConversionResult(
             markdown=markdown,
             output_path=str(out_path),
+            pages_dir=str(pages_dir) if pages_dir is not None else None,
             pages_total=len(images),
             pages_ok=sum(1 for p in ordered if p.ok),
             pages_failed=sum(1 for p in ordered if not p.ok),
@@ -169,15 +193,13 @@ class Pipeline:
                 await asyncio.sleep(self.settings.retry_backoff ** attempt)
         raise last_error  # type: ignore[misc]
 
-    def _write_output(self, pdf_path: Path, output_path: str | Path | None, markdown: str) -> Path:
+    def _resolve_output_path(self, pdf_path: Path, output_path: str | Path | None) -> Path:
         if output_path:
             out = Path(output_path)
             if out.suffix.lower() != ".md":
                 out = out / f"{pdf_path.stem}.md"
         else:
             out = pdf_path.with_suffix(".md")
-        ensure_dir(out.parent)
-        out.write_text(markdown, encoding="utf-8")
         return out
 
     def _compute_job_id(self, pdf_path: Path, model: str, prompt: str, pages: list[int]) -> str:

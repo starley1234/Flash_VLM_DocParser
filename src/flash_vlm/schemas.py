@@ -22,6 +22,10 @@ class PageResult(BaseModel):
     cached: bool = False
     duration_ms: int = 0
     model: str | None = None
+    # Изображение страницы (после ресайза), сохранённое на диск для контроля.
+    image_path: str | None = Field(default=None, exclude=True)
+    image_width: int | None = None
+    image_height: int | None = None
 
 
 class ConversionResult(BaseModel):
@@ -29,6 +33,7 @@ class ConversionResult(BaseModel):
 
     markdown: str = ""
     output_path: str | None = None
+    pages_dir: str | None = None  # каталог с изображениями страниц
     pages_total: int = 0
     pages_ok: int = 0
     pages_failed: int = 0
@@ -59,7 +64,10 @@ class Job(BaseModel):
     finished_at: datetime | None = None
     error: str | None = None
     output_path: str | None = None
+    pages_dir: str | None = None
     result: ConversionResult | None = None
+    # Готовые страницы (потоково пополняются по мере распознавания).
+    completed_pages: list[PageResult] = Field(default_factory=list)
 
     @property
     def progress(self) -> float:

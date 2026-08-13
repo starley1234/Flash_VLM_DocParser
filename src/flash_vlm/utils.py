@@ -23,6 +23,15 @@ def ensure_dir(path: Path) -> Path:
     return path
 
 
+def pages_dir_for(output_path: str | Path) -> Path:
+    """Каталог для изображений страниц рядом с итоговым ``.md``.
+
+    Для ``output/document.md`` вернёт ``output/document_pages``.
+    """
+    out = Path(output_path)
+    return out.parent / f"{out.stem}_pages"
+
+
 def image_to_data_url(image: Image.Image, image_format: str = "PNG") -> str:
     """Кодирует PIL-изображение в data URL для OpenAI-совместимого API."""
     fmt = "JPEG" if image_format.upper() in {"JPEG", "JPG"} else "PNG"

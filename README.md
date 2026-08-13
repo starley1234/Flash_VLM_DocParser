@@ -101,6 +101,12 @@ flash-vlm convert document.pdf --fake
 
 Прогресс выводится в консоль: `Обработка страницы 5 из 20...`.
 
+Веб-интерфейс (`http://localhost:8000/`) выводит распознанный текст **по мере
+готовности каждой страницы** и показывает галерею уменьшенных изображений страниц
+с их реальными размерами (`Стр. N — 512×724 px`) — так можно убедиться, что ресайз
+применился. Изображения сохраняются на диск рядом с итоговым `.md` в каталог
+`<имя>_pages` (отключается через `FLASH_VLM_SAVE_PAGE_IMAGES=false`).
+
 ---
 
 ## HTTP API
@@ -125,6 +131,7 @@ uvicorn flash_vlm.api.app:create_app --factory --host 0.0.0.0 --port 8000
 | `GET` | `/jobs/{id}` | Статус и прогресс задачи |
 | `GET` | `/jobs/{id}/result` | Итоговый Markdown |
 | `GET` | `/jobs/{id}/download` | Скачать `.md` |
+| `GET` | `/jobs/{id}/page/{n}` | Уменьшенное изображение страницы (PNG) |
 | `DELETE` | `/jobs/{id}` | Отменить/удалить задачу |
 | `*` | `/mcp` | MCP-сервер (streamable HTTP) |
 
@@ -135,12 +142,16 @@ uvicorn flash_vlm.api.app:create_app --factory --host 0.0.0.0 --port 8000
 curl -F "file=@document.pdf" -F "model=" -F "pages=" http://localhost:8000/convert
 # → {"job_id": "...", "status_url": "/jobs/...", ...}
 
-# Прогресс
+# Прогресс (потоково): в completed_pages лежат уже распознанные страницы
 curl http://localhost:8000/jobs/<job_id>
-# → {"status": "running", "current_page": 5, "done": 5, "total": 20, ...}
+# → {"status": "running", "current_page": 5, "done": 5, "total": 20,
+#    "completed_pages": [{"page": 1, "markdown": "...", "image_width": 512, ...}, ...]}
 
 # Результат
 curl http://localhost:8000/jobs/<job_id>/result
+
+# Уменьшенное изображение страницы (контроль ресайза)
+curl -o page1.png http://localhost:8000/jobs/<job_id>/page/1
 
 # Скачать Markdown
 curl -OJ http://localhost:8000/jobs/<job_id>/download
@@ -224,6 +235,7 @@ streamlit run src/flash_vlm/ui/streamlit_app.py
 | `FLASH_VLM_USE_CACHE` | `true` | Кеширование страниц |
 | `FLASH_VLM_CACHE_DIR` | `.cache/flash_vlm` | Каталог кеша |
 | `FLASH_VLM_OUTPUT_DIR` | `output` | Каталог результатов API |
+| `FLASH_VLM_SAVE_PAGE_IMAGES` | `true` | Сохранять уменьшенные изображения страниц |
 | `FLASH_VLM_API_HOST` / `FLASH_VLM_API_PORT` | `0.0.0.0` / `8000` | API |
 | `FLASH_VLM_FAKE_VLM` | `false` | Демо-режим без LM Studio |
 

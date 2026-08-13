@@ -19,6 +19,7 @@ except ImportError as exc:  # pragma: no cover
 from .. import prompts
 from ..config import Settings, get_settings
 from ..factory import build_pipeline
+from ..schemas import ConversionResult
 
 st.set_page_config(page_title="Flash-VLM DocParser", layout="wide")
 
@@ -31,30 +32,38 @@ def _run_conversion(
     settings: Settings,
     pages: str | None,
     prompt: str,
-) -> dict:
+    progress_bar,
+    text_placeholder,
+) -> ConversionResult:
     pipeline = build_pipeline(settings)
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(pdf_bytes)
         tmp_path = Path(tmp.name)
 
-    progress_bar = st.progress(0.0, text="Подготовка…")
+    collected: list = []
 
-    def on_progress(done: int, total: int, current_page: int) -> None:
-        progress_bar.progress(min(done / total, 1.0), text=f"Обработка страницы {current_page} из {total}...")
+    def on_progress(done: int, total: int, result) -> None:
+        collected.append(result)
+        progress_bar.progress(min(done / total, 1.0), text=f"Обработка страницы {result.page} из {total}...")
+        streamed = "\n\n".join(
+            f"<!-- Страница {p.page} -->\n{p.markdown}" if p.ok
+            else f"<!-- Страница {p.page} -->\n> ⚠️ Не распознана: {p.error}"
+            for p in collected
+        )
+        text_placeholder.markdown(streamed or "_Ожидание текста…_")
 
-    async def run() -> dict:
+    async def run() -> ConversionResult:
         try:
             # Модель не передаём: она берётся из .env (FLASH_VLM_MODEL)
             # или определяется автоматически.
-            result = await pipeline.convert(
+            return await pipeline.convert(
                 tmp_path,
                 pages=pages or None,
                 prompt=prompt.strip() or None,
                 page_markers=settings.page_markers,
                 on_progress=on_progress,
             )
-            return result.model_dump()
         finally:
             await pipeline.client.close()
             tmp_path.unlink(missing_ok=True)
@@ -108,26 +117,45 @@ def main() -> None:
             use_cache=use_cache,
             fake_vlm=fake,
         )
+
+        progress_bar = st.progress(0.0, text="Подготовка…")
+        text_placeholder = st.empty()
+
         with st.spinner("Конвертация…"):
             try:
-                result = _run_conversion(uploaded.getvalue(), uploaded.name, settings, pages, prompt)
+                result = _run_conversion(
+                    uploaded.getvalue(), uploaded.name, settings, pages, prompt,
+                    progress_bar, text_placeholder,
+                )
             except Exception as exc:  # noqa: BLE001
                 st.error(f"Ошибка: {exc}")
                 return
 
+        progress_bar.progress(1.0, text="Готово")
         st.success(
-            f"Готово: {result['output_path']} "
-            f"(модель {result['model']}, страниц {result['pages_total']}, "
-            f"из кеша {result['cached_pages']}, время {result['duration_ms'] / 1000:.1f} c)"
+            f"Готово: {result.output_path} "
+            f"(модель {result.model}, страниц {result.pages_total}, "
+            f"из кеша {result.cached_pages}, время {result.duration_ms / 1000:.1f} c)"
         )
         st.download_button(
             "Скачать Markdown",
-            data=result["markdown"],
+            data=result.markdown,
             file_name=Path(uploaded.name).with_suffix(".md").name,
             mime="text/markdown",
         )
-        with st.expander("Предпросмотр", expanded=True):
-            st.markdown(result["markdown"])
+
+        # Галерея уменьшенных изображений страниц (контроль ресайза).
+        with_images = [p for p in result.pages if p.image_path and Path(p.image_path).exists()]
+        if with_images:
+            st.subheader("Изображения страниц (после ресайза)")
+            columns = st.columns(4)
+            for index, page in enumerate(with_images):
+                with columns[index % 4]:
+                    st.image(
+                        str(page.image_path),
+                        caption=f"Стр. {page.page} — {page.image_width}×{page.image_height} px",
+                        use_container_width=True,
+                    )
 
 
 if __name__ == "__main__":  # pragma: no cover

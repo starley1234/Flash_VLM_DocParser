@@ -19,7 +19,7 @@ def test_convert_end_to_end(sample_pdf, tmp_path):
     progress: list[tuple[int, int, int]] = []
 
     result = asyncio.run(
-        pipeline.convert(sample_pdf, on_progress=lambda done, total, cur: progress.append((done, total, cur)))
+        pipeline.convert(sample_pdf, on_progress=lambda done, total, res: progress.append((done, total, res.page)))
     )
 
     assert result.pages_total == 3
@@ -32,6 +32,25 @@ def test_convert_end_to_end(sample_pdf, tmp_path):
     assert Path(result.output_path).exists()
     assert len(progress) == 3
     assert progress[-1] == (3, 3, 3)
+
+    # Изображения страниц сохранены (контроль ресайза).
+    assert result.pages_dir is not None
+    for page in result.pages:
+        assert page.image_width == settings.image_width
+        assert page.image_path and Path(page.image_path).exists()
+
+
+def test_convert_save_page_images_disabled(sample_pdf, tmp_path):
+    settings = Settings(
+        fake_vlm=True,
+        cache_dir=tmp_path / "cache",
+        output_dir=tmp_path / "output",
+        save_page_images=False,
+    )
+    pipeline = build_pipeline(settings)
+    result = asyncio.run(pipeline.convert(sample_pdf))
+    assert result.pages_dir is None
+    assert all(p.image_path is None for p in result.pages)
 
 
 def test_convert_uses_cache_on_second_run(sample_pdf, tmp_path):

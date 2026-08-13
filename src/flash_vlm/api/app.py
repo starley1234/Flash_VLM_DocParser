@@ -9,6 +9,7 @@
 - ``GET /jobs/{id}``             — статус/прогресс задачи;
 - ``GET /jobs/{id}/result``      — итоговый Markdown;
 - ``GET /jobs/{id}/download``    — скачать .md;
+- ``GET /jobs/{id}/page/{n}``    — уменьшенное изображение страницы;
 - ``DELETE /jobs/{id}``          — отменить/удалить задачу;
 - ``/mcp``                       — MCP-сервер (streamable HTTP).
 
@@ -33,7 +34,7 @@ from ..factory import build_pipeline
 from ..jobs import JobManager
 from ..mcp.server import create_mcp_server
 from ..schemas import Job, JobStatus
-from ..utils import decode_base64_image, ensure_dir
+from ..utils import decode_base64_image, ensure_dir, pages_dir_for
 
 __all__ = ["create_app", "main"]
 
@@ -44,24 +45,31 @@ INDEX_HTML = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Flash-VLM DocParser</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 0 auto; padding: 24px; }
+  :root { color-scheme: light; }
+  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 0 auto; padding: 24px;
+         background: #ffffff; color: #1f2328; }
   h1 { margin-bottom: 4px; }
-  .sub { color: #888; margin-top: 0; }
-  .panel { border: 1px solid #333; border-radius: 8px; padding: 16px; display: flex;
-           flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+  .sub { color: #57606a; margin-top: 0; }
+  .panel { border: 1px solid #d0d7de; border-radius: 8px; padding: 16px; display: flex;
+           flex-wrap: wrap; gap: 12px; align-items: flex-end; background: #f6f8fa; }
   .field { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
-  input[type=text] { padding: 6px; border: 1px solid #666; border-radius: 4px; }
-  textarea { width: 100%; padding: 8px; border: 1px solid #666; border-radius: 6px;
-             font-family: ui-monospace, monospace; font-size: 13px; }
+  input[type=text] { padding: 6px; border: 1px solid #d0d7de; border-radius: 4px;
+                     background: #ffffff; color: #1f2328; }
+  textarea { width: 100%; padding: 8px; border: 1px solid #d0d7de; border-radius: 6px;
+             font-family: ui-monospace, monospace; font-size: 13px; background: #ffffff; color: #1f2328; }
   button { padding: 8px 16px; border: 0; border-radius: 6px; background: #2f81f7;
            color: white; cursor: pointer; font-size: 15px; }
   button:disabled { background: #555; cursor: wait; }
   #status { margin: 16px 0; font-size: 15px; min-height: 1.4em; }
-  pre { background: #111; border: 1px solid #333; border-radius: 8px; padding: 16px;
-        white-space: pre-wrap; overflow: auto; max-height: 60vh; font-size: 13px; }
-  a.download { display: inline-block; margin-top: 12px; color: #2f81f7; }
-  .error { color: #f85149; }
+  pre { background: #1f2328; color: #f0f6fc; border: 1px solid #30363d; border-radius: 8px;
+        padding: 16px; white-space: pre-wrap; overflow: auto; max-height: 60vh; font-size: 13px; }
+  a.download { display: inline-block; margin-top: 12px; color: #0969da; }
+  .error { color: #d1242f; }
+  #gallery { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+  .page-fig { margin: 0; text-align: center; }
+  .page-fig img { max-width: 150px; max-height: 200px; border: 1px solid #d0d7de;
+                  border-radius: 4px; background: #fff; }
+  .page-fig figcaption { font-size: 12px; color: #57606a; margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -87,6 +95,7 @@ INDEX_HTML = """<!doctype html>
   </div>
 
   <div id="status"></div>
+  <div id="gallery"></div>
   <div id="download"></div>
   <pre id="result" hidden></pre>
 
@@ -97,7 +106,10 @@ async function convert() {
   const status = document.getElementById('status');
   const button = document.getElementById('go');
   const result = document.getElementById('result');
+  const gallery = document.getElementById('gallery');
   result.hidden = true;
+  result.textContent = '';
+  gallery.innerHTML = '';
   document.getElementById('download').innerHTML = '';
   button.disabled = true;
 
@@ -120,19 +132,47 @@ async function convert() {
 }
 
 async function poll(id, status) {
+  const pre = document.getElementById('result');
+  const gallery = document.getElementById('gallery');
+  const rendered = new Set();
   while (true) {
     const r = await fetch('/jobs/' + id);
     const j = await r.json();
     status.textContent = 'Статус: ' + j.status + ' — страница ' + j.current_page +
       ' из ' + j.total + ' (' + j.done + '/' + j.total + ')';
-    if (j.status === 'done') {
-      const res = await fetch('/jobs/' + id + '/result');
-      const data = await res.json();
-      const pre = document.getElementById('result');
-      pre.textContent = data.markdown;
+
+    // Потоково добавляем готовые страницы (текст + уменьшенное изображение).
+    for (const p of (j.completed_pages || [])) {
+      if (rendered.has(p.page)) continue;
+      rendered.add(p.page);
+
+      let block = '\n\n--- Страница ' + p.page + ' ---\n\n';
+      if (p.ok) block += p.markdown || '';
+      else block += '⚠️ Страница ' + p.page + ' не распознана: ' + (p.error || 'неизвестная ошибка');
+      pre.textContent += block;
       pre.hidden = false;
+      pre.scrollTop = pre.scrollHeight;
+
+      const fig = document.createElement('figure');
+      fig.className = 'page-fig';
+      const a = document.createElement('a');
+      a.href = '/jobs/' + id + '/page/' + p.page;
+      a.target = '_blank';
+      const img = document.createElement('img');
+      img.src = '/jobs/' + id + '/page/' + p.page;
+      img.alt = 'Страница ' + p.page;
+      a.appendChild(img);
+      const cap = document.createElement('figcaption');
+      cap.textContent = 'Стр. ' + p.page + ' — ' + (p.image_width || '?') + '×' + (p.image_height || '?') + ' px';
+      fig.appendChild(a);
+      fig.appendChild(cap);
+      gallery.appendChild(fig);
+    }
+
+    if (j.status === 'done') {
       document.getElementById('download').innerHTML =
         '<a class="download" href="/jobs/' + id + '/download" download>Скачать .md</a>';
+      status.textContent = 'Готово: ' + j.done + ' из ' + j.total + ' страниц распознано.';
       break;
     } else if (j.status === 'error') {
       status.innerHTML = '<span class="error">Ошибка: ' + (j.error || 'неизвестная') + '</span>';
@@ -200,11 +240,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             stem = Path(job.filename).stem or "document"
             output_path = settings.output_dir / f"{job.id}_{stem}.md"
+            if settings.save_page_images:
+                # Каталог с изображениями страниц создаём заранее, чтобы
+                # эндпоинт /page/{n} мог отдавать их по мере готовности.
+                job.pages_dir = str(pages_dir_for(output_path))
+                ensure_dir(Path(job.pages_dir))
 
-            def on_progress(done: int, total: int, current_page: int) -> None:
+            def on_progress(done: int, total: int, result) -> None:
                 job.done = done
                 job.total = total
-                job.current_page = current_page
+                job.current_page = result.page
+                job.completed_pages.append(result)
 
             result = await pipeline.convert(
                 pdf_path,
@@ -219,6 +265,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             job.result = result
             job.output_path = result.output_path
+            job.pages_dir = result.pages_dir or job.pages_dir
             job.status = JobStatus.DONE
         except Exception as exc:  # noqa: BLE001
             job.status = JobStatus.ERROR
@@ -306,7 +353,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/jobs")
     async def list_jobs() -> dict:
-        return {"jobs": [j.model_dump(exclude={"result"}) for j in jobs.list()]}
+        return {"jobs": [j.model_dump(exclude={"result", "completed_pages"}) for j in jobs.list()]}
 
     @app.get("/jobs/{job_id}")
     async def get_job(job_id: str) -> dict:
@@ -335,6 +382,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail="Результат ещё не готов")
         filename = Path(job.filename).with_suffix(".md").name
         return FileResponse(job.output_path, media_type="text/markdown", filename=filename)
+
+    @app.get("/jobs/{job_id}/page/{page_number}")
+    async def get_job_page_image(job_id: str, page_number: int) -> FileResponse:
+        """Возвращает уменьшенное изображение страницы (контроль ресайза)."""
+        job = jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Задача не найдена")
+        if not job.pages_dir:
+            raise HTTPException(status_code=404, detail="Изображения страниц недоступны (save_page_images=false)")
+        path = Path(job.pages_dir) / f"page_{page_number:04d}.png"
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="Изображение страницы не найдено")
+        return FileResponse(path, media_type="image/png")
 
     @app.delete("/jobs/{job_id}")
     async def delete_job(job_id: str) -> dict:
